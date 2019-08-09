@@ -1,0 +1,17 @@
+[package]
+name = "inheritance"
+version = "0.0.0"
+authors = ["Daniel Henry-Mantilla <daniel.henry.mantilla@gmail.com>"]
+edition = "2018"
+
+documentation = "https://docs.rs/inheritance"
+homepage = "https://crates.io/crates/inheritance"
+repository = "https://github.com/danielhenrymantilla/inheritance-rs"
+
+description = "Avoiding code reuse in Rust with OOP inheritance"
+
+license = "MIT"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
