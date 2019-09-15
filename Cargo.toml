@@ -1,6 +1,6 @@
 [package]
 name = "inheritance"
-version = "0.0.0"
+version = "0.0.1-alpha"
 authors = ["Daniel Henry-Mantilla <daniel.henry.mantilla@gmail.com>"]
 edition = "2018"
 
@@ -15,3 +15,13 @@ license = "MIT"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+
+[dependencies.proc_macro]
+package = "inheritance-proc-macro"
+version = "0.0.1-alpha"
+path = "src/proc_macro"
+
+[features]
+verbose-expansions = ["proc_macro/verbose-expansions", ]
+
+default = []

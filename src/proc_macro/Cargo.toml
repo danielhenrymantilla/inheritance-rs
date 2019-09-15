@@ -1,0 +1,21 @@
+[lib]
+proc-macro = true
+path = "mod.rs"
+
+[package]
+name = "inheritance-proc-macro"
+version = "0.0.1-alpha"
+authors = ["Daniel Henry-Mantilla <daniel.henry.mantilla@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+fstrings = "0.1.4"
+proc-macro2 = "1.0.3"
+proc-macro-crate = "0.1.4"
+quote = "1.0.2"
+syn = { version = "1.0.5", features = ["full", ] }
+
+[features]
+verbose-expansions = ["syn/extra-traits", ]
+
+default = []
