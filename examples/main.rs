@@ -1,67 +1,114 @@
-#![feature(specialization)]
+#![cfg_attr(feature = "specialization",
+    feature(specialization),
+)]
+#![allow(unused)]#![warn(unused_must_use)]
 
 #[macro_use]
 extern crate inheritance;
 
-use ::std::borrow::Cow;
-
 #[inheritable]
-trait Point {
+trait IsPoint {
     fn x (self: &'_ Self)
       -> f32
     ;
+
     fn y (self: &'_ Self)
       -> f32
     ;
 
-    fn clear<T> (self: &'_ mut Self, _: ())
-    ;
-
-    fn name (self: &'_ Self) -> Cow<'_, str>
+    fn name (self: &'_ Self)
+      -> String
     {
-        format!("Point({x}, {y})", x = self.x(), y = self.y()).into()
+        format!("Point({x}, {y})", x = self.x(), y = self.y())
     }
 }
 
-struct Coords {
+struct Point {
     x: f32,
     y: f32,
 }
 
-impl Point for Coords {
-    #[inline] fn x (self: &'_ Self) -> f32 { self.x }
-    #[inline] fn y (self: &'_ Self) -> f32 { self.y }
-    #[inline] fn clear<T> (self: &'_ mut Self, _: ()) {}
+impl IsPoint for Point {
+    #[inline]
+    fn x (self: &'_ Self) -> f32
+    {
+        self.x
+    }
+
+    #[inline]
+    fn y (self: &'_ Self) -> f32
+    {
+        self.y
+    }
 }
 
 #[derive(Inheritance)]
-struct NewPoint (#[inherits(Point)] Coords);
+struct NewPoint (#[inherits(IsPoint)] Point);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+#[inheritable]
+trait Colored {
+    fn color (self: &'_ Self)
+      -> Color
+    ;
+}
+
+impl Colored for Color {
+    #[inline]
+    fn color (self: &'_ Self)
+      -> Color
+    {
+        *self
+    }
+}
 
 #[derive(Inheritance)]
 struct NamedPoint {
-    #[inherits(self::Point)]
-    coords: Coords,
+    #[inherits(IsPoint)]
+    point: Point,
 
     name: &'static str,
-}
 
-impl Point for NamedPoint {
-    fn x (&self) -> f32 { -1. }
-    fn name (self: &'_ Self) -> Cow<'_, str>
-    {
-        format!("{} named {}",
-            self.parent().name(),
-            self.name,
-        ).into()
-    }
+    #[inherits(Colored)]
+    pigments: Color,
 }
 
 fn main ()
 {
     let point = NamedPoint {
-        coords: Coords { x: 42., y: 27. },
+        point: Point { x: 42., y: 27. },
         name: "Carré",
+        pigments: Color::Red,
     };
-    dbg!(point.name());
-    dbg!(point.parent().name());
+    dbg!(point.color());
+
+    #[cfg(not(feature = "specialization"))] {
+        dbg!(point.name());
+    }
+    #[cfg(feature = "specialization")] {
+        // With the (nightly) specialization feature we can override the
+        //
+        impl IsPoint for NamedPoint {
+            fn name (self: &'_ Self) -> String
+            {
+                format!("{} named {}", self.point.name(), self.name)
+            }
+
+            /// This, however, does not change the value returned by
+            /// `self.point.name()` (obviously?)
+            fn x (self: &'_ Self) -> f32
+            {
+                -1.
+            }
+        }
+        dbg!(point.name());
+        // Access the "parent" / non-specialized `impl` through an explicit delegation
+        dbg!(point.point.name());
+    }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "inheritance"
-version = "0.0.1-alpha"
+version = "0.0.1-alpha.2"
 authors = ["Daniel Henry-Mantilla <daniel.henry.mantilla@gmail.com>"]
 edition = "2018"
 
@@ -8,7 +8,7 @@ documentation = "https://docs.rs/inheritance"
 homepage = "https://crates.io/crates/inheritance"
 repository = "https://github.com/danielhenrymantilla/inheritance-rs"
 
-description = "Avoiding code reuse in Rust with OOP inheritance"
+description = "Avoiding code repetition in Rust with OOP inheritance"
 
 license = "MIT"
 
@@ -18,10 +18,16 @@ license = "MIT"
 
 [dependencies.proc_macro]
 package = "inheritance-proc-macro"
-version = "0.0.1-alpha"
+version = "0.0.1-alpha.2"
 path = "src/proc_macro"
 
 [features]
+specialization = ["proc_macro/specialization"]
 verbose-expansions = ["proc_macro/verbose-expansions", ]
 
+external_doc = []
+
 default = []
+
+[package.metadata.docs.rs]
+features = ["external_doc"]

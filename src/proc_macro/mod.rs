@@ -1,10 +1,13 @@
-#![feature(box_patterns)]
 #![allow(non_snake_case, unused_imports)]
+
+extern crate proc_macro;
 
 #[macro_use]
 extern crate fstrings;
-extern crate proc_macro;
-use ::proc_macro::TokenStream;
+
+use ::proc_macro::{
+    TokenStream,
+};
 use ::proc_macro2::{
     Span,
     TokenStream as TokenStream2,
@@ -26,7 +29,8 @@ use ::std::{*,
     result::Result,
 };
 
-#[macro_use] mod macros;
+#[macro_use]
+mod macros;
 
 #[inline]
 fn take<T : Default> (x: &'_ mut T)
@@ -39,9 +43,11 @@ fn take<T : Default> (x: &'_ mut T)
 fn inheritable (params: TokenStream, input: TokenStream)
   -> TokenStream
 {
+    // === Parse / extraction logic ===
     #[cfg_attr(feature = "verbose-expansions",
         derive(Debug),
     )]
+    #[allow(dead_code)] // dumb compiler...
     struct Trait {
         ident: Ident,
         methods: Vec<TraitItemMethod>,
@@ -50,18 +56,35 @@ fn inheritable (params: TokenStream, input: TokenStream)
     impl Parse for Trait {
         fn parse (input: ParseStream) -> syn::Result<Self>
         {Ok({
-            let item_trait: ItemTrait = input.parse()?;
-            let ident: Ident = item_trait.ident;
+            let ItemTrait {
+                    ident,
+                    items,
+                    generics,
+                    ..
+                } = input.parse()?
+            ;
+            match (
+                generics.type_params().next(),
+                generics.lifetimes().next(),
+                generics.const_params().next(),
+            )
+            {
+                | (None, None, None) => {},
+
+                | _ => parse_error!(
+                    generics.span(),
+                    "Trait generics are not supported (yet)",
+                ),
+            }
             let methods: Vec<TraitItemMethod> =
-                item_trait
-                    .items
+                items
                     .into_iter()
                     //  error on non-function items
                     .map(|trait_item| match trait_item {
                         | TraitItem::Method(method) => Ok(method),
                         | _ => parse_error!(
                             trait_item.span(),
-                            "`#[inheritable]` only supports methods"
+                            "`#[inheritable]` currently only supports methods"
                         ),
                     })
                     // error on non-method functions
@@ -70,15 +93,30 @@ fn inheritable (params: TokenStream, input: TokenStream)
                         let mut span = sig.ident.span();
                         match sig.inputs.iter().next() {
                             // & [mut] self
-                            | Some(&FnArg::Receiver(_)) => {},
-                            // self: & [mut] _
-                            | Some(&FnArg::Typed(PatType {
-                                pat: box Pat::Ident(PatIdent { ref ident, .. }),
-                                ty: box Type::Reference(_),
+                            | Some(&FnArg::Receiver(Receiver {
+                                reference: Some(_),
                                 ..
                             }))
-                                if ident == "self"
                             => {},
+
+                            // self: & [mut] _
+                            | Some(&FnArg::Typed(PatType {
+                                ref pat,
+                                ref ty,
+                                ..
+                            }))
+                                if match (&**pat, &**ty) {
+                                    | (
+                                        &Pat::Ident(PatIdent { ref ident, .. }),
+                                        &Type::Reference(_),
+                                    ) => {
+                                        ident == "self"
+                                    },
+
+                                    | _ => false,
+                                }
+                            => {},
+
                             // otherwise
                             | opt_arg => {
                                 if let Some(arg) = opt_arg {
@@ -101,42 +139,69 @@ fn inheritable (params: TokenStream, input: TokenStream)
         })}
     }
 
+
+    set_output!( render => ret );
+
     debug!(concat!(
         "-------------------------\n",
         "#[inheritable({params})]\n",
         "{input}\n",
     ), params=params, input=input);
+
+
+    // === This macro does not expect params ===
     let params = TokenStream2::from(params);
     if params.clone().into_iter().next().is_some() {
         error!(params.span(), "Unexpected parameter(s)");
     }
 
-    set_output!( render => ret );
-    ret.extend(input.clone());
-
+    // === Parse the input ===
     let Trait {
         ident: Trait,
         mut methods,
-    } = parse_macro_input!(input);
+    } = {
+        let input = input.clone();
+        parse_macro_input!(input)
+    };
 
+
+    // === Render the decorated trait itself (as is) ===
+    ret.extend(input);
+
+
+    // === Render the helper `Inherits#Trait` trait ===
     let InheritsTrait = Ident::new(&f!(
-        "Inherits{Trait}"
+        "__Inherits{Trait}__"
     ), Span::call_site());
 
+    ret.extend({
+        // Due to a bug in `quote!`, we need to render
+        // `#[doc(hidden)]`
+        // manually
+        use ::proc_macro::*;
+        iter::once(TokenTree::Punct(Punct::new(
+            '#',
+        Spacing::Alone))).chain(TokenStream::from(::quote::quote! {
+            [doc(hidden)]
+        }))
+    });
     render! {
+        pub(in crate)
         trait #InheritsTrait {
-            type Parent
-                : ?Sized + #Trait
+            type __Parent__
+                : #Trait
             ;
-            fn parent (self: &'_ Self)
-              -> &'_ Self::Parent
+            fn __parent__ (self: &'_ Self)
+              -> &'_ Self::__Parent__
             ;
-            fn parent_mut (self: &'_ mut Self)
-              -> &'_ mut Self::Parent
+            fn __parent_mut__ (self: &'_ mut Self)
+              -> &'_ mut Self::__Parent__
             ;
         }
     };
 
+
+    // === Render the default impl of `Trait` for `InheritsTrait` implemetors ===
     methods
         .iter_mut()
         .for_each(|method| {
@@ -165,32 +230,33 @@ fn inheritable (params: TokenStream, input: TokenStream)
             *inputs =
                 inputs_iter
                     .next()
-                    .map(|first_arg| match first_arg {
-                        | FnArg::Receiver(Receiver {
-                            ref mutability,
-                            ..
-                        })
-                        | FnArg::Typed(PatType {
-                            ty: box Type::Reference(TypeReference {
+                    .map(|first_arg| {
+                        if match first_arg {
+                            | FnArg::Receiver(Receiver {
                                 ref mutability,
                                 ..
-                            }),
-                            ..
-                        })
-                        => {
-                            parent_mb_mut = if mutability.is_some() {
-                                quote! {
-                                    parent_mut
-                                }
-                            } else {
-                                quote! {
-                                    parent
-                                }
-                            };
-                            first_arg
-                        },
+                            }) => {
+                                mutability.is_some()
+                            },
+                        // with box patterns we'd be able to merge both cases...
+                            | FnArg::Typed(PatType { ref ty, .. }) => {
+                                match &**ty {
+                                    | &Type::Reference(TypeReference {
+                                        ref mutability,
+                                        ..
+                                    }) => {
+                                        mutability.is_some()
+                                    },
 
-                        | _ => unreachable!(),
+                                    | _ => unreachable!(),
+                                }
+                            },
+                        } {
+                            parent_mb_mut = quote!( __parent_mut__ );
+                        } else {
+                            parent_mb_mut = quote!( __parent__ );
+                        }
+                        first_arg
                     })
                     .into_iter()
                     .chain(
@@ -215,11 +281,12 @@ fn inheritable (params: TokenStream, input: TokenStream)
             ;
             let generics = generics.split_for_impl().1;
             let generics = generics.as_turbofish();
+            // method body
             *default = Some(parse_quote! {
                 {
                     /* 100% guaranteed unambiguous version */
                     // <
-                    //     <Self as #InheritsTrait>::Parent
+                    //     <Self as #InheritsTrait>::__Parent__
                     //     as #Trait
                     // >::#ident #generics (
                     //     #InheritsTrait :: #parent_mb_mut(self),
@@ -234,19 +301,29 @@ fn inheritable (params: TokenStream, input: TokenStream)
             });
         })
     ;
+    let default_if_specialization =
+        if cfg!(feature = "specialization") {
+            quote!( default )
+        } else {
+            TokenStream2::new()
+        }
+    ;
     render! {
-        impl<__inheritable_T__ : ?Sized + #InheritsTrait> #Trait
+        impl<__inheritable_T__ : #InheritsTrait> #Trait
             for __inheritable_T__
         {
             #(
                 #[inline]
-                default
+                #default_if_specialization
                 #methods
             )*
         }
     }
 
+
     debug!("=> becomes =>\n\n{}\n-------------------------\n", ret);
+
+
     ret
 }
 
@@ -260,23 +337,26 @@ fn derive_Inheritance (input: TokenStream)
         "{input}\n",
         "\n",
     ), input=input);
+
     set_output!( render => ret );
+
     let DeriveInput {
-        ident: Struct,
-        generics,
-        data,
-        ..
-    } = parse_macro_input!(input);
+            ident: Struct,
+            generics,
+            data,
+            ..
+        } = parse_macro_input!(input)
+    ;
     let fields = match data {
         | Data::Struct(DataStruct { fields, .. }) => fields,
         | Data::Enum(r#enum) => {
             error!(r#enum.enum_token.span(),
-                "enums are not supported yet"
+                "enums are not supported"
             );
         },
         | Data::Union(r#union) => {
             error!(r#union.union_token.span(),
-                "unions are not supported yet"
+                "unions are not supported"
             );
         },
     };
@@ -314,7 +394,7 @@ fn derive_Inheritance (input: TokenStream)
                                 ;
                                 let ref Trait = last.ident;
                                 let InheritsTrait = Ident::new(&f!(
-                                    "Inherits{Trait}"
+                                    "__Inherits{Trait}__"
                                 ), span);
                                 *last = parse_quote! {
                                     #InheritsTrait
@@ -351,24 +431,24 @@ fn derive_Inheritance (input: TokenStream)
                 for #Struct #ty_generics
             #where_clause
             {
-                type Parent = #FieldType;
+                type __Parent__ = #FieldType;
 
                 #[inline]
-                fn parent (self: &'_ Self)
-                  -> &'_ Self::Parent
+                fn __parent__ (self: &'_ Self)
+                  -> &'_ Self::__Parent__
                 {
                     &self.#field_name
                 }
 
                 #[inline]
-                fn parent_mut (self: &'_ mut Self)
-                  -> &'_ mut Self::Parent
+                fn __parent_mut__ (self: &'_ mut Self)
+                  -> &'_ mut Self::__Parent__
                 {
                     &mut self.#field_name
                 }
             }
         }
     }
-    debug!("=> becomes =>\n\n{}\n-------------------------\n", ret);
+    debug!("=> generates =>\n\n{}\n-------------------------\n", ret);
     ret
 }
